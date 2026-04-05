@@ -1,16 +1,11 @@
+import asyncio
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from app.core.processor import process, OPERATIONS
+from app.core.validate import validate_image
 
 router = APIRouter(prefix="/api/v1/cv", tags=["image-processing"])
 
-ALLOWED = {"jpg", "jpeg", "png", "bmp", "webp"}
 ALL_OPS = list(OPERATIONS.keys()) + ["contours"]
-
-
-def _validate(filename: str):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ALLOWED:
-        raise HTTPException(status_code=400, detail=f"Unsupported format: .{ext}")
 
 
 @router.get("/operations")
@@ -31,13 +26,12 @@ async def process_image(
     iterations: int = Form(1),
     threshold: int = Form(127),
 ):
-    _validate(file.filename)
-    if operation not in ALL_OPS:
-        raise HTTPException(status_code=400, detail=f"Unknown operation: {operation}. Choose from: {ALL_OPS}")
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-
+    validate_image(file, content)
+    if operation not in ALL_OPS:
+        raise HTTPException(status_code=400, detail=f"Unknown operation: {operation}. Choose from: {ALL_OPS}")
     params = {
         "threshold1": threshold1, "threshold2": threshold2,
         "ksize": ksize, "sigma": sigma,
@@ -45,6 +39,8 @@ async def process_image(
         "iterations": iterations, "threshold": threshold,
     }
     try:
-        return process(content, operation, params)
+        return await asyncio.get_running_loop().run_in_executor(None, process, content, operation, params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing error: {e}")
